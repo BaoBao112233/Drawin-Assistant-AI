@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finch AI - Agentic SQL Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🚀 Finch AI</h1>
+            <p class="subtitle">Multi-Agent SQL Analytics Platform</p>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Left Sidebar: Database Explorer -->
+            <aside class="sidebar">
+                <h2>📊 Database Explorer</h2>
+                <div id="tables-list" class="tables-list">
+                    <p class="loading">Loading tables...</p>
+                </div>
+                
+                <!-- Table Preview -->
+                <div id="table-preview" class="table-preview" style="display: none;">
+                    <h3 id="preview-title"></h3>
+                    <div id="preview-schema" class="schema-box"></div>
+                    <div id="preview-data" class="preview-data"></div>
+                </div>
+            </aside>
+
+            <!-- Center: Chat Interface -->
+            <main class="chat-section">
+                <div class="chat-container">
+                    <div id="chat-messages" class="chat-messages">
+                        <div class="welcome-message">
+                            <h2>👋 Welcome to Finch AI</h2>
+                            <p>Ask questions about your data in natural language!</p>
+                            <div class="example-questions">
+                                <p><strong>Example questions:</strong></p>
+                                <ul>
+                                    <li onclick="askQuestion(this.textContent)">What is the total revenue for USNC last month?</li>
+                                    <li onclick="askQuestion(this.textContent)">How many trips were completed yesterday?</li>
+                                    <li onclick="askQuestion(this.textContent)">Show me top 5 drivers by earnings</li>
+                                    <li onclick="askQuestion(this.textContent)">What does USNC mean?</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Input Area -->
+                    <div class="chat-input-container">
+                        <input 
+                            type="text" 
+                            id="chat-input" 
+                            placeholder="Ask a question about your data..."
+                            onkeypress="handleKeyPress(event)"
+                        >
+                        <button onclick="sendMessage()" id="send-btn">Send</button>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Right Sidebar: Query History -->
+            <aside class="sidebar-right">
+                <h2>📜 Query History</h2>
+                <div id="query-history" class="query-history">
+                    <p class="loading">Loading history...</p>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <script>
+        let currentQueryId = null;
+
+        // Load tables on startup
+        window.addEventListener('DOMContentLoaded', () => {
+            loadTables();
+            loadQueryHistory();
+        });
+
+        async function loadTables() {
+            try {
+                const response = await fetch('/tables');
+                const data = await response.json();
+                
+                const tablesList = document.getElementById('tables-list');
+                tablesList.innerHTML = '';
+                
+                data.tables.forEach(table => {
+                    const tableItem = document.createElement('div');
+                    tableItem.className = 'table-item';
+                    tableItem.innerHTML = `
+                        <div class="table-name">${table.name}</div>
+                        <div class="table-meta">
+                            <span class="badge ${table.type}">${table.type}</span>
+                            <span class="row-count">${table.row_count.toLocaleString()} rows</span>
+                        </div>
+                    `;
+                    tableItem.onclick = () => loadTablePreview(table.name);
+                    tablesList.appendChild(tableItem);
+                });
+            } catch (error) {
+                console.error('Error loading tables:', error);
+                document.getElementById('tables-list').innerHTML = 
+                    '<p class="error">Failed to load tables</p>';
+            }
+        }
+
+        async function loadTablePreview(tableName) {
+            try {
+                const response = await fetch(`/table/${tableName}`);
+                const data = await response.json();
+                
+                const preview = document.getElementById('table-preview');
+                preview.style.display = 'block';
+                
+                document.getElementById('preview-title').textContent = tableName;
+                
+                // Schema
+                const schemaBox = document.getElementById('preview-schema');
+                schemaBox.innerHTML = '<strong>Schema:</strong><br>' + 
+                    data.schema.map(col => 
+                        `<span class="column">${col.name}: ${col.type}</span>`
+                    ).join('<br>');
+                
+                // Preview data
+                const previewData = document.getElementById('preview-data');
+                if (data.preview_data.length > 0) {
+                    previewData.innerHTML = `
+                        <strong>Preview (first ${data.preview_row_count} rows):</strong>
+                        ${renderTable(data.preview_data)}
+                    `;
+                } else {
+                    previewData.innerHTML = '<p>No data to preview</p>';
+                }
+            } catch (error) {
+                console.error('Error loading preview:', error);
+            }
+        }
+
+        async function loadQueryHistory(limit = 10) {
+            try {
+                const response = await fetch(`/query-history?limit=${limit}`);
+                const data = await response.json();
+                
+                const historyDiv = document.getElementById('query-history');
+                historyDiv.innerHTML = '';
+                
+                if (data.history.length === 0) {
+                    historyDiv.innerHTML = '<p>No queries yet</p>';
+                    return;
+                }
+                
+                data.history.forEach(item => {
+                    const historyItem = document.createElement('div');
+                    historyItem.className = 'history-item';
+                    
+                    let statusBadge = '';
+                    if (item.error) {
+                        statusBadge = '<span class="badge error">Error</span>';
+                    } else if (item.trust_score !== null) {
+                        const trustLevel = item.trust_score >= 0.8 ? 'high' : 
+                                         item.trust_score >= 0.6 ? 'medium' : 'low';
+                        statusBadge = `<span class="badge trust-${trustLevel}">Trust: ${item.trust_score.toFixed(2)}</span>`;
+                    }
+                    
+                    historyItem.innerHTML = `
+                        <div class="history-question">${item.question}</div>
+                        <div class="history-meta">
+                            <span class="badge">${item.agent_used}</span>
+                            ${statusBadge}
+                            <span class="time">${item.execution_time_ms}ms</span>
+                        </div>
+                    `;
+                    historyDiv.appendChild(historyItem);
+                });
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function askQuestion(question) {
+            document.getElementById('chat-input').value = question;
+            sendMessage();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const question = input.value.trim();
+            
+            if (!question) return;
+            
+            // Disable input
+            input.disabled = true;
+            document.getElementById('send-btn').disabled = true;
+            
+            // Add user message to chat
+            addMessage('user', question);
+            
+            // Clear input
+            input.value = '';
+            
+            try {
+                // Show loading
+                const loadingId = addMessage('assistant', 'Thinking...', true);
+                
+                // Send request
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question })
+                });
+                
+                const data = await response.json();
+                
+                // Remove loading message
+                document.getElementById(loadingId).remove();
+                
+                // Add response
+                addChatResponse(data);
+                
+                // Reload history
+                loadQueryHistory();
+                
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('assistant', 'Sorry, an error occurred: ' + error.message);
+            } finally {
+                // Re-enable input
+                input.disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                input.focus();
+            }
+        }
+
+        function addMessage(role, content, isLoading = false) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageId = 'msg-' + Date.now();
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.id = messageId;
+            messageDiv.className = `message ${role}`;
+            
+            if (isLoading) {
+                messageDiv.innerHTML = `<div class="loading-dots">${content}</div>`;
+            } else {
+                messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
+            }
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            
+            return messageId;
+        }
+
+        function addChatResponse(data) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant response-card';
+            
+            let html = '<div class="response-content">';
+            
+            // Agent info
+            html += `<div class="response-header">
+                <span class="badge">${data.agent_used}</span>
+                <span class="time">${data.execution_time_ms}ms</span>
+            </div>`;
+            
+            // Error handling
+            if (data.error) {
+                html += `<div class="error-box">❌ ${data.error}</div>`;
+            }
+            
+            // Doc agent response
+            if (data.agent_used === 'doc_agent' && data.answer) {
+                html += `<div class="answer-box">${escapeHtml(data.answer)}</div>`;
+            }
+            
+            // SQL agent response
+            if (data.sql) {
+                html += `<div class="sql-box">
+                    <strong>Generated SQL:</strong>
+                    <pre><code>${escapeHtml(data.sql)}</code></pre>
+                </div>`;
+            }
+            
+            if (data.explanation) {
+                html += `<div class="explanation-box">
+                    <strong>Explanation:</strong> ${escapeHtml(data.explanation)}
+                </div>`;
+            }
+            
+            // Results table
+            if (data.results && data.results.length > 0) {
+                html += `<div class="results-box">
+                    <strong>Results (${data.row_count} rows):</strong>
+                    ${renderTable(data.results)}
+                </div>`;
+            } else if (data.results && data.results.length === 0) {
+                html += '<div class="results-box">No results returned</div>';
+            }
+            
+            // Scores
+            if (data.confidence_score !== null || data.trust_score !== null) {
+                html += '<div class="scores-box">';
+                if (data.confidence_score !== null) {
+                    const confLevel = data.confidence_score >= 0.8 ? 'high' : 
+                                    data.confidence_score >= 0.6 ? 'medium' : 'low';
+                    html += `<span class="score confidence-${confLevel}">
+                        Confidence: ${data.confidence_score.toFixed(2)}
+                    </span>`;
+                }
+                if (data.trust_score !== null) {
+                    const trustLevel = data.trust_score >= 0.8 ? 'high' : 
+                                     data.trust_score >= 0.6 ? 'medium' : 'low';
+                    html += `<span class="score trust-${trustLevel}">
+                        Trust: ${data.trust_score.toFixed(2)}
+                    </span>`;
+                }
+                html += '</div>';
+            }
+            
+            // Validation notes
+            if (data.validation_notes && data.validation_notes.length > 0) {
+                html += '<div class="validation-notes">';
+                html += '<strong>Validation:</strong><ul>';
+                data.validation_notes.forEach(note => {
+                    html += `<li>${escapeHtml(note)}</li>`;
+                });
+                html += '</ul></div>';
+            }
+            
+            html += '</div>';
+            messageDiv.innerHTML = html;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function renderTable(data) {
+            if (!data || data.length === 0) return '<p>No data</p>';
+            
+            const keys = Object.keys(data[0]);
+            
+            let html = '<table class="results-table"><thead><tr>';
+            keys.forEach(key => {
+                html += `<th>${escapeHtml(key)}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            data.slice(0, 50).forEach(row => {
+                html += '<tr>';
+                keys.forEach(key => {
+                    const value = row[key];
+                    html += `<td>${value !== null ? escapeHtml(String(value)) : '<em>null</em>'}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            
+            if (data.length > 50) {
+                html += `<p class="truncate-notice">Showing first 50 of ${data.length} rows</p>`;
+            }
+            
+            return html;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
