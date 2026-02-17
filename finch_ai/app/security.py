@@ -1,4 +1,5 @@
 """Security module for query validation and protection."""
+import os
 import re
 import logging
 from typing import Tuple, Optional
