@@ -152,9 +152,21 @@ class MetadataService:
         context_parts.append("# DATABASE CONTEXT\n")
         
         # Get flattened tables (preferred for analytics)
-        context_parts.append("## Flattened Analytics Tables (USE THESE FOR METRICS):\n")
-        context_parts.append("- trip_metrics_daily: Daily aggregated trip statistics\n")
-        context_parts.append("- region_revenue_summary: Monthly revenue by region\n\n")
+        context_parts.append("## Flattened Analytics Tables (USE THESE FOR AGGREGATE METRICS ONLY):\n")
+        context_parts.append("- trip_metrics_daily: Daily aggregated trip statistics by region\n")
+        context_parts.append("  Columns: date, region_id, total_trips, completed_trips, cancelled_trips, total_revenue, avg_trip_distance, avg_trip_duration, avg_fare, unique_users, unique_drivers, surge_trips, promo_trips\n")
+        context_parts.append("  ⚠️ NO driver_id, user_id, or individual trip details!\n")
+        context_parts.append("- region_revenue_summary: Monthly revenue by region\n")
+        context_parts.append("  Columns: region_id, year, month, total_revenue, total_trips, total_distance_km, active_users, active_drivers, avg_rating, support_tickets\n")
+        context_parts.append("  ⚠️ NO individual driver/user data!\n\n")
+        
+        context_parts.append("## Transactional Tables (USE FOR INDIVIDUAL RECORDS):\n")
+        context_parts.append("- users: id, email, name, phone, created_at\n")
+        context_parts.append("- drivers: id, name, email, phone, license_number, region_id, vehicle_id, rating, is_active, total_trips, total_earnings, created_at\n")
+        context_parts.append("  ⚠️ drivers table has name/email directly, NO user_id!\n")
+        context_parts.append("- trips: id, user_id, driver_id, origin, destination, distance_km, duration_minutes, fare, status, payment_id, region_id, created_at, completed_at\n")
+        context_parts.append("- payments: id, trip_id, amount, payment_method, status, created_at\n")
+        context_parts.append("- ratings: id, trip_id, user_id, driver_id, rating, comment, created_at\n\n")
         
         # Search for relevant metadata
         keywords = user_question.lower().split()
@@ -182,10 +194,12 @@ class MetadataService:
         
         # Add important rules
         context_parts.append("## IMPORTANT RULES:\n")
-        context_parts.append("1. For revenue/metrics queries, USE flattened tables\n")
-        context_parts.append("2. Join with regions table to resolve region codes\n")
-        context_parts.append("3. Always use appropriate date filters\n")
-        context_parts.append("4. Prefer aggregated data over raw transactions\n\n")
+        context_parts.append("1. For INDIVIDUAL driver/user queries (top drivers, specific user trips, etc), USE transactional tables (drivers, trips, users)\n")
+        context_parts.append("2. For AGGREGATE metrics by region/date (total revenue, daily stats), USE flattened tables\n")
+        context_parts.append("3. Join with regions table to resolve region codes (USNC, EMEA, etc)\n")
+        context_parts.append("4. For driver earnings/ratings: Query drivers table or JOIN trips with drivers\n")
+        context_parts.append("5. Always use appropriate date filters\n")
+        context_parts.append("6. Use LIMIT for queries returning many rows\n\n")
         
         return "".join(context_parts)
 

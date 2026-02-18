@@ -231,6 +231,8 @@ class AIGateway:
         if not self.groq_key:
             raise ValueError("Groq API key not configured")
         
+        logger.info("🚀 Calling Groq API with model: openai/gpt-oss-20b")
+        
         try:
             from groq import AsyncGroq
             
@@ -254,6 +256,8 @@ class AIGateway:
                 temperature=temperature,
                 max_tokens=max_tokens
             )
+            
+            logger.info(f"✅ Groq API success! Model: {response.model}, Tokens: {response.usage.total_tokens if response.usage else 'N/A'}")
             
             return {
                 "text": response.choices[0].message.content,

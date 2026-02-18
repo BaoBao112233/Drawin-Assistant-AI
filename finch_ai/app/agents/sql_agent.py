@@ -47,7 +47,8 @@ class SQLAgent:
             
             # Step 2: Generate SQL
             logger.info("Generating SQL query...")
-            sql_response = await self._generate_sql(user_question, context)
+            ai_result = await self._generate_sql(user_question, context)
+            sql_response = ai_result["text"]
             
             # Parse response
             sql_query = self._extract_sql(sql_response)
@@ -95,7 +96,10 @@ class SQLAgent:
                 "confidence_score": confidence,
                 "results": results,
                 "error": None,
-                "row_count": len(results) if results else 0
+                "row_count": len(results) if results else 0,
+                "ai_provider": ai_result.get("provider"),
+                "ai_model": ai_result.get("model"),
+                "ai_tokens": ai_result.get("tokens")
             }
             
         except Exception as e:
@@ -108,8 +112,8 @@ class SQLAgent:
                 "error": str(e)
             }
     
-    async def _generate_sql(self, user_question: str, context: str) -> str:
-        """Generate SQL using AI with full context."""
+    async def _generate_sql(self, user_question: str, context: str) -> Dict[str, Any]:
+        """Generate SQL using AI with full context. Returns full AI response."""
         
         system_prompt = """You are an expert SQL query generator for a PostgreSQL database.
 
@@ -153,7 +157,7 @@ Generate the SQL query now."""
             max_tokens=1000
         )
         
-        return result["text"]
+        return result  # Return full result object
     
     def _extract_sql(self, response: str) -> Optional[str]:
         """Extract SQL query from AI response."""

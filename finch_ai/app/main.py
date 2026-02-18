@@ -169,19 +169,23 @@ async def chat(
         # Calculate execution time
         execution_time_ms = int((time.time() - start_time) * 1000)
         
-        # Save to query history
-        history = QueryHistory(
-            user_question=request.question,
-            generated_sql=response.get("sql"),
-            execution_result=str(response.get("results", ""))[:5000],  # Truncate
-            confidence_score=response.get("confidence_score"),
-            trust_score=trust_score,
-            agent_used=response.get("agent_used"),
-            error_message=response.get("error"),
-            execution_time_ms=execution_time_ms
-        )
-        db.add(history)
-        await db.commit()
+        # Save to query history (with error handling)
+        try:
+            history = QueryHistory(
+                user_question=request.question,
+                generated_sql=response.get("sql"),
+                execution_result=str(response.get("results", ""))[:5000],  # Truncate
+                confidence_score=response.get("confidence_score"),
+                trust_score=trust_score,
+                agent_used=response.get("agent_used"),
+                error_message=response.get("error"),
+                execution_time_ms=execution_time_ms
+            )
+            db.add(history)
+            await db.commit()
+        except Exception as hist_error:
+            logger.error(f"Failed to save query history: {hist_error}")
+            await db.rollback()
         
         # Build response
         return ChatResponse(

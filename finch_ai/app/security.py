@@ -137,6 +137,12 @@ class QuerySecurityValidator:
         except Exception as e:
             logger.error(f"Query execution error: {e}")
             
+            # Rollback transaction
+            try:
+                await db.rollback()
+            except:
+                pass
+            
             # Reset timeout
             try:
                 await db.execute(text("RESET statement_timeout"))
