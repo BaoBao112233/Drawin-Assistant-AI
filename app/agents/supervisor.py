@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai_gateway import ai_gateway
+from app.agents.cot_agent import cot_agent
 
 logger = logging.getLogger(__name__)
 
@@ -122,47 +123,55 @@ REASON: <one short sentence>"""
                 reasoning="Documentation keywords detected; no data keywords."
             )
 
-        # LLM-based classification for ambiguous cases
+        # ── COT-enhanced classification for ambiguous queries ─────────────
+        # When BOTH data and documentation signals are present the question is
+        # genuinely ambiguous.  We use a Chain-of-Thought pass to reason
+        # through the most likely intent before making the final decision.
         try:
-            result = await ai_gateway.generate(
-                prompt=perception.user_question,
-                system_prompt=self.CLASSIFICATION_PROMPT,
-                temperature=0.15,
-                max_tokens=80,
+            cot_result = await cot_agent.reason_through(
+                task=(
+                    f'Classify this question as either SQL_QUERY (requests data, '
+                    f'numbers, metrics, lists) or DOCUMENTATION (requests '
+                    f'explanations, definitions, or system knowledge):\n'
+                    f'"{perception.user_question}"'
+                ),
+                name="Intent Classifier",
+                description="Reasons about whether a question needs SQL data or documentation",
+                instructions=[
+                    "SQL_QUERY: asks for counts, totals, revenue, trip data, driver lists, etc.",
+                    "DOCUMENTATION: asks what something means, explains a term or process",
+                    "When in doubt, prefer SQL_QUERY — data questions are more common",
+                    f"Data signal detected: {perception.has_data_keywords}",
+                    f"Documentation signal detected: {perception.has_doc_keywords}",
+                ],
+                max_iterations=3,
+                temperature=0.2,
             )
-            text = result["text"].strip()
 
-            intent     = "sql_query"
-            confidence = "medium"
-            reasoning  = text
+            cot_answer = (cot_result.final_answer or "").upper()
+            if "DOCUMENTATION" in cot_answer or "DOC" in cot_answer:
+                intent, confidence = "documentation", "medium"
+            else:
+                intent, confidence = "sql_query", "medium"
 
-            for line in text.splitlines():
-                line_upper = line.upper()
-                if line_upper.startswith("INTENT:"):
-                    raw = line.split(":", 1)[1].strip().upper()
-                    intent = "documentation" if "DOCUMENTATION" in raw else "sql_query"
-                elif line_upper.startswith("CONFIDENCE:"):
-                    raw = line.split(":", 1)[1].strip().upper()
-                    confidence = (
-                        "high"   if "HIGH" in raw else
-                        "low"    if "LOW"  in raw else
-                        "medium"
-                    )
-                elif line_upper.startswith("REASON:"):
-                    reasoning = line.split(":", 1)[1].strip()
+            # Upgrade to high confidence if COT converged cleanly
+            if cot_result.converged and cot_result.iterations_used <= 2:
+                confidence = "high"
+
+            reasoning = f"COT reasoning ({cot_result.iterations_used} steps): {cot_result.final_answer}"
 
             plan = SupervisorPlan(intent=intent, confidence=confidence, reasoning=reasoning)
             logger.info(
-                f"[Supervisor|Planning] intent={intent} "
-                f"confidence={confidence} reason={reasoning}"
+                f"[Supervisor|Planning] COT classification: intent={intent} "
+                f"confidence={confidence} converged={cot_result.converged}"
             )
             return plan
 
         except Exception as e:
-            logger.error(f"[Supervisor|Planning] LLM classification failed: {e}")
+            logger.error(f"[Supervisor|Planning] COT classification failed: {e}")
             return SupervisorPlan(
                 intent="sql_query", confidence="low",
-                reasoning=f"LLM error – defaulting to SQL_QUERY: {e}"
+                reasoning=f"COT error – defaulting to SQL_QUERY: {e}"
             )
 
     # ── Phase 3 – Tool / Action ───────────────────────────────────────────────

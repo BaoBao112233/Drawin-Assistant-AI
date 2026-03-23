@@ -22,6 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GoldenQuery
 from app.security import query_validator
+from app.agents.cot_agent import cot_agent
+
+# Trust-score range where COT reasoning is triggered for deeper analysis.
+_COT_TRUST_LOW  = 0.35
+_COT_TRUST_HIGH = 0.75
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +301,65 @@ class ValidatorAgent:
             notes.append("Trust slightly reduced: golden query is itself slow.")
 
         notes.append(f"Matched golden: '{golden.question}'")
+
+        # ── COT trust refinement for borderline scores ────────────────────
+        # When the automated trust computation lands in the uncertain zone
+        # (0.35–0.75), use a Chain-of-Thought reasoning pass to decide
+        # whether the score should be adjusted up or down.
+        if _COT_TRUST_LOW <= trust <= _COT_TRUST_HIGH:
+            try:
+                cot_result = await cot_agent.reason_through(
+                    task=(
+                        f"Assess whether the trust score of {trust:.2f} for the following "
+                        f"generated SQL query is accurate, too high, or too low.\n\n"
+                        f"User question : {perception.user_question}\n"
+                        f"Generated SQL : {perception.generated_sql[:400]}\n"
+                        f"Golden SQL    : {golden.sql_query[:400]}\n"
+                        f"Result rows   : {perception.result_size}\n"
+                        f"SQL similarity: {sql_sim:.2f}\n"
+                        f"Result score  : {result_score:.2f}\n\n"
+                        f"Decide: should the trust score be INCREASED, DECREASED, or KEPT "
+                        f"at {trust:.2f}?  By how much (0.05–0.15 max)?  "
+                        f"Respond with a final numeric trust score between 0 and 1."
+                    ),
+                    name="Trust Score Reasoner",
+                    description="Reasons about the reliability of a generated SQL query",
+                    instructions=[
+                        "A high trust score (> 0.75) means results match the golden query closely",
+                        "A low trust score (< 0.35) means results differ significantly",
+                        "Only adjust by a small amount (0.05–0.15) unless the evidence is strong",
+                        "Consider both SQL structural similarity AND result similarity",
+                        "Your final answer must be a single decimal between 0.0 and 1.0",
+                    ],
+                    max_iterations=4,
+                    temperature=0.2,
+                )
+                # Try to parse a numeric score from the COT final answer
+                import re as _re
+                m = _re.search(r'(\d\.\d+|0\.\d+|1\.0)', cot_result.final_answer or "")
+                if m:
+                    cot_trust = float(m.group(1))
+                    # Only apply if within sane bounds and meaningful delta
+                    if 0.0 <= cot_trust <= 1.0 and abs(cot_trust - trust) <= 0.2:
+                        notes.append(
+                            f"COT reasoning adjusted trust {trust:.2f} → {cot_trust:.2f} "
+                            f"({cot_result.iterations_used} steps, "
+                            f"converged={cot_result.converged})"
+                        )
+                        trust = round(cot_trust, 2)
+                    else:
+                        notes.append(
+                            f"COT suggestion ({cot_trust:.2f}) out of bounds; "
+                            f"original trust {trust:.2f} kept."
+                        )
+                else:
+                    notes.append(
+                        f"COT reasoning complete but no numeric score found; "
+                        f"trust {trust:.2f} unchanged."
+                    )
+            except Exception as cot_err:
+                logger.warning(f"[Validator] COT trust refinement failed (non-fatal): {cot_err}")
+                notes.append("COT trust refinement skipped due to error.")
 
         return ValidationResult(
             trust_score=trust,

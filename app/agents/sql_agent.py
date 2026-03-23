@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai_gateway import ai_gateway
 from app.metadata import metadata_service
 from app.security import query_validator
+from app.agents.cot_agent import cot_agent, COTResult
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,46 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
             f"timeout={timeout_s}s row_limit={row_cap} explain={need_explain}"
         )
 
+        # ── COT pre-reasoning (complexity >= 3) ───────────────────────────
+        # For non-trivial queries, run a chain-of-thought reasoning pass to
+        # figure out the right tables, joins, and filtering strategy BEFORE
+        # generating the SQL.  The trace is injected into the generation prompt
+        # so the SQL-generation LLM has a full reasoning trail.
+        cot_trace_text = ""
+        if c >= 3:
+            cot_result: COTResult = await cot_agent.reason_through(
+                task=(
+                    f"Determine the best PostgreSQL query strategy for:\n"
+                    f"{perception.user_question}\n\n"
+                    f"Consider: which table(s) to use, what JOINs are needed, "
+                    f"what date filters apply, which columns to aggregate, "
+                    f"and how to keep the query fast (prefer aggregated tables)."
+                ),
+                context=perception.metadata_context[:2000],  # trim to avoid token explosion
+                name="SQL Strategy Reasoner",
+                description="Reasons step-by-step about the optimal SQL query structure",
+                instructions=[
+                    f"Preferred table strategy: {strategy_hint}",
+                    f"Row limit: {row_cap}",
+                    "Prefer trip_metrics_daily and region_revenue_summary over raw tables",
+                    "Identify all required JOINs before deciding on the final query",
+                    "Note any date / region filters that should be applied",
+                ],
+                max_iterations=4,
+                temperature=0.25,
+            )
+            cot_trace_text = (
+                "\n\n## Chain-of-Thought Pre-Reasoning\n"
+                + cot_agent.format_trace_for_context(cot_result)
+                + "\n\nUse the reasoning above to guide the SQL you generate.\n"
+            )
+            logger.info(
+                f"[SQLAgent|Planning] COT completed: "
+                f"converged={cot_result.converged} "
+                f"iterations={cot_result.iterations_used} "
+                f"time={cot_result.total_time_ms:.0f}ms"
+            )
+
         system_prompt = self.GENERATION_PROMPT.replace("{row_limit}", str(row_cap))
         plan_ctx = (
             f"\n\n## Performance Constraints\n"
@@ -215,7 +256,7 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
             f"- Complexity estimate: {c}/10\n"
         )
         prompt = (
-            f"{perception.metadata_context}{plan_ctx}\n"
+            f"{perception.metadata_context}{plan_ctx}{cot_trace_text}\n"
             f"User Question: {perception.user_question}\n\n"
             f"Generate the optimised SQL query now."
         )
