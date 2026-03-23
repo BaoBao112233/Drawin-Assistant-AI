@@ -166,7 +166,8 @@ class MetadataService:
         context_parts.append("  ⚠️ drivers table has name/email directly, NO user_id!\n")
         context_parts.append("- trips: id, user_id, driver_id, origin, destination, distance_km, duration_minutes, fare, status, payment_id, region_id, created_at, completed_at\n")
         context_parts.append("- payments: id, trip_id, amount, payment_method, status, created_at\n")
-        context_parts.append("- ratings: id, trip_id, user_id, driver_id, rating, comment, created_at\n\n")
+        context_parts.append("- ratings: id, trip_id, user_id, driver_id, user_rating, driver_rating, user_comment, driver_comment, created_at\n")
+        context_parts.append("  ⚠️ ratings table has NO 'rating' column! Use user_rating (1-5) or driver_rating (1-5)!\n\n")
         
         # Search for relevant metadata
         keywords = user_question.lower().split()
@@ -197,7 +198,7 @@ class MetadataService:
         context_parts.append("1. For INDIVIDUAL driver/user queries (top drivers, specific user trips, etc), USE transactional tables (drivers, trips, users)\n")
         context_parts.append("2. For AGGREGATE metrics by region/date (total revenue, daily stats), USE flattened tables\n")
         context_parts.append("3. Join with regions table to resolve region codes (USNC, EMEA, etc)\n")
-        context_parts.append("4. For driver earnings/ratings: Query drivers table or JOIN trips with drivers\n")
+        context_parts.append("4. For driver earnings/ratings: Query drivers table (column: rating) or JOIN trips with ratings (columns: user_rating, driver_rating)\n")
         context_parts.append("5. Always use appropriate date filters\n")
         context_parts.append("6. Use LIMIT for queries returning many rows\n\n")
         
