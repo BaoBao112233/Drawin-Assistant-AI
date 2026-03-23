@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Database URLs
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://finch_user:finch_password@localhost:5432/finch_db")
-DATABASE_URL_SYNC = os.getenv("DATABASE_URL_SYNC", "postgresql://finch_user:finch_password@localhost:5432/finch_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://drawin_user:drawin_password@localhost:5432/drawin_db")
+DATABASE_URL_SYNC = os.getenv("DATABASE_URL_SYNC", "postgresql://drawin_user:drawin_password@localhost:5432/drawin_db")
 
 # Async engine (for FastAPI)
 async_engine = create_async_engine(

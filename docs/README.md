@@ -1,6 +1,6 @@
-# Finch AI - Technical Documentation
+# Drawin AI - Technical Documentation
 
-Bộ tài liệu kỹ thuật chi tiết về kiến trúc và quá trình xử lý của hệ thống Finch AI.
+Bộ tài liệu kỹ thuật chi tiết về kiến trúc và quá trình xử lý của hệ thống Drawin AI.
 
 ---
 
@@ -76,7 +76,7 @@ Mô tả chi tiết hệ thống Multi-Agent:
 ### 4. [System Architecture](./system-architecture.md)
 **Tổng quan Kiến trúc Hệ thống**
 
-Kiến trúc tổng thể của Finch AI:
+Kiến trúc tổng thể của Drawin AI:
 - System context diagram (C4 model)
 - Deployment architecture
 - Technology stack
@@ -165,7 +165,7 @@ Groq (Primary) → OpenAI → Gemini → Local Stub
 
 ```bash
 # 1. Setup (one-time)
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 ./setup.sh
 
 # 2. Configure API key (if not done)
@@ -326,7 +326,7 @@ docs/
 tail -f server.log
 
 # Check PostgreSQL logs
-docker logs finch_postgres
+docker logs drawin_postgres
 ```
 
 **API Test:**

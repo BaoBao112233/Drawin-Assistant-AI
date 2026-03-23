@@ -469,7 +469,7 @@ def seed_metadata(db: Session):
 def main():
     """Main seeding function."""
     print("=" * 60)
-    print("FINCH AI - Database Seeding Script")
+    print("DRAWIN AI - Database Seeding Script")
     print("=" * 60)
     
     # Initialize database

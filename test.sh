@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Finch AI - Test Script
+# Drawin AI - Test Script
 
-echo "🧪 Testing Finch AI System"
+echo "🧪 Testing Drawin AI System"
 echo "================================"
 
 BASE_URL="http://localhost:8000"

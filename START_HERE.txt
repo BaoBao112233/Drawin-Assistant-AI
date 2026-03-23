@@ -1,12 +1,12 @@
 ╔═══════════════════════════════════════════════════════════════════════╗
 ║                                                                       ║
-║                    🚀 FINCH AI - BẮTĐẦU TỪ ĐÂY                      ║
+║                    🚀 DRAWIN AI - BẮTĐẦU TỪ ĐÂY                      ║
 ║                   AI Agentic SQL Analytics Platform                  ║
 ║                                                                       ║
 ╚═══════════════════════════════════════════════════════════════════════╝
 
 📦 Hệ thống đã được tạo hoàn chỉnh tại:
-   /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+   /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 
 ✅ Tất cả 25+ files đã được generate với code chạy được
 
@@ -14,7 +14,7 @@
 
 🎯 BƯỚC 1: CHO NGƯỜI MỚI (5 PHÚT)
 
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 
 # Mở file .env và thay OPENAI_API_KEY
 nano .env
@@ -56,7 +56,7 @@ nano .env
 
 📂 CẤU TRÚC PROJECT
 
-finch_ai/
+drawin_ai/
 ├── app/                    # Backend code
 │   ├── main.py            # FastAPI app (8 endpoints)
 │   ├── database.py        # DB config
@@ -154,7 +154,7 @@ File: .env
 
 ⚠️  QUAN TRỌNG: Phải thay đổi OPENAI_API_KEY!
 
-DATABASE_URL=postgresql+asyncpg://finch_user:finch_password@localhost:5432/finch_db
+DATABASE_URL=postgresql+asyncpg://drawin_user:drawin_password@localhost:5432/drawin_db
 OPENAI_API_KEY=sk-your-actual-key-here    ← CHANGE THIS!
 DEFAULT_AI_MODEL=openai
 
@@ -162,7 +162,7 @@ DEFAULT_AI_MODEL=openai
 
 🚀 CHẠY NHANH (3 COMMANDS)
 
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 ./setup.sh      # Setup + seed database
 ./run.sh        # Start server
 

@@ -1,4 +1,4 @@
-# 📊 FINCH AI - PROJECT SUMMARY
+# 📊 DRAWIN AI - PROJECT SUMMARY
 
 ## ✅ HỆ THỐNG ĐÃ HOÀN THÀNH
 
@@ -8,7 +8,7 @@
 ### 📂 Cấu trúc project (Đã tạo)
 
 ```
-finch_ai/
+drawin_ai/
 ├── app/
 │   ├── __init__.py                 ✅ Package init
 │   ├── main.py                     ✅ FastAPI app với 8 endpoints
@@ -196,7 +196,7 @@ All endpoints:
 
 ### Option 1: Automated Setup (RECOMMENDED)
 ```bash
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 
 # Edit .env and add your OpenAI API key
 nano .env
@@ -210,7 +210,7 @@ nano .env
 
 ### Option 2: Manual Setup
 ```bash
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 
 # 1. Setup environment
 cp .env.example .env

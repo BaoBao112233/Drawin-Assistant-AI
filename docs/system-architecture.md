@@ -1,24 +1,24 @@
-# System Architecture - Finch AI
+# System Architecture - Drawin AI
 
 ## Tổng quan Kiến trúc Hệ thống
 
 ```mermaid
 graph LR
     User["👤 Data Analyst<br/>Asks business questions<br/>in natural language"]
-    Finch["🚀 Finch AI System<br/>AI-powered SQL analytics<br/>Multi-agent query processing"]
+    Drawin["🚀 Drawin AI System<br/>AI-powered SQL analytics<br/>Multi-agent query processing"]
     Groq["⚡ Groq API<br/>Ultra-fast LLM<br/>gpt-oss-20b"]
     OpenAI["🤖 OpenAI API<br/>Fallback<br/>gpt-4o-mini"]
     Gemini["🔮 Google Gemini<br/>Fallback<br/>gemini-1.5-flash"]
     DB[("💾 PostgreSQL<br/>15 tables")]
     
-    User -->|"Asks questions<br/>HTTPS/JSON"| Finch
-    Finch -->|"Generate SQL<br/>HTTPS/JSON"| Groq
-    Finch -.->|Fallback| OpenAI
-    Finch -.->|Fallback| Gemini
-    Finch -->|"Query data<br/>PostgreSQL"| DB
+    User -->|"Asks questions<br/>HTTPS/JSON"| Drawin
+    Drawin -->|"Generate SQL<br/>HTTPS/JSON"| Groq
+    Drawin -.->|Fallback| OpenAI
+    Drawin -.->|Fallback| Gemini
+    Drawin -->|"Query data<br/>PostgreSQL"| DB
     
     style User fill:#e1f5ff
-    style Finch fill:#fff9c4
+    style Drawin fill:#fff9c4
     style Groq fill:#81c784
     style OpenAI fill:#90caf9
     style Gemini fill:#ce93d8
@@ -71,7 +71,7 @@ graph TB
 
 ```mermaid
 graph LR
-    Root["🚀 Finch AI Tech Stack"]
+    Root["🚀 Drawin AI Tech Stack"]
     
     B["📦 Backend<br/>FastAPI 0.109<br/>Python 3.13<br/>Uvicorn"]
     D["💾 Database<br/>PostgreSQL 16<br/>SQLAlchemy 2.0<br/>15 Tables"]
@@ -273,7 +273,7 @@ sequenceDiagram
 ## File Structure
 
 ```
-finch_ai/
+drawin_ai/
 ├── app/
 │   ├── __init__.py              # Package init
 │   ├── main.py                  # FastAPI application (433 lines)
@@ -363,7 +363,7 @@ Total: 26 files created, ~4,000+ lines of code
 
 ```bash
 # Database
-DATABASE_URL=postgresql+asyncpg://finch_user:finch_password@localhost:5432/finch_db
+DATABASE_URL=postgresql+asyncpg://drawin_user:drawin_password@localhost:5432/drawin_db
 
 # AI Providers
 GROQ_API_KEY=gsk_your_groq_api_key_here
@@ -399,7 +399,7 @@ LOG_LEVEL=INFO
 
 ```bash
 # Setup (one-time)
-cd finch_ai
+cd drawin_ai
 chmod +x setup.sh run.sh test.sh
 ./setup.sh
 

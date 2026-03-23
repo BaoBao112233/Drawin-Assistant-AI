@@ -3,24 +3,24 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: finch_postgres
+    container_name: drawin_postgres
     environment:
-      POSTGRES_USER: finch_user
-      POSTGRES_PASSWORD: finch_password
-      POSTGRES_DB: finch_db
+      POSTGRES_USER: drawin_user
+      POSTGRES_PASSWORD: drawin_password
+      POSTGRES_DB: drawin_db
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U finch_user"]
+      test: ["CMD-SHELL", "pg_isready -U drawin_user"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   opensearch:
     image: opensearchproject/opensearch:2.11.1
-    container_name: finch_opensearch
+    container_name: drawin_opensearch
     environment:
       - discovery.type=single-node
       - bootstrap.memory_lock=true
@@ -39,10 +39,10 @@ services:
 
   app:
     build: .
-    container_name: finch_app
+    container_name: drawin_app
     environment:
-      - DATABASE_URL=postgresql+asyncpg://finch_user:finch_password@postgres:5432/finch_db
-      - DATABASE_URL_SYNC=postgresql://finch_user:finch_password@postgres:5432/finch_db
+      - DATABASE_URL=postgresql+asyncpg://drawin_user:drawin_password@postgres:5432/drawin_db
+      - DATABASE_URL_SYNC=postgresql://drawin_user:drawin_password@postgres:5432/drawin_db
       - OPENSEARCH_HOST=opensearch
       - OPENSEARCH_PORT=9200
     ports:

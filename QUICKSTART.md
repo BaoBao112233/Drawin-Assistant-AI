@@ -1,14 +1,14 @@
-# QUICK START GUIDE - FINCH AI
+# QUICK START GUIDE - DRAWIN AI
 
 ## 🎯 Mục tiêu
-Chạy được hệ thống Finch AI hoàn chỉnh trong 5 phút.
+Chạy được hệ thống Drawin AI hoàn chỉnh trong 5 phút.
 
 ## ✅ Các bước thực hiện
 
 ### Bước 1: Chuẩn bị môi trường
 
 ```bash
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 
 # Copy file env
 cp .env.example .env
@@ -189,8 +189,8 @@ cat .env | grep OPENAI
 
 ### Lỗi: No module named 'app'
 ```bash
-# Phải chạy từ thư mục finch_ai/
-cd /home/baobao/Projects/Drawin-Assistant-AI/finch_ai
+# Phải chạy từ thư mục drawin_ai/
+cd /home/baobao/Projects/Drawin-Assistant-AI/drawin_ai
 
 # Và activate venv
 source venv/bin/activate
@@ -201,7 +201,7 @@ source venv/bin/activate
 ### UI Layout:
 ```
 ┌──────────────────────────────────────────┐
-│        🚀 Finch AI                       │
+│        🚀 Drawin AI                       │
 ├──────────┬─────────────────┬─────────────┤
 │ Database │   Chat UI       │ Query       │
 │ Explorer │                 │ History     │

@@ -1,8 +1,8 @@
-# 🏗 Finch AI - Architecture Documentation
+# 🏗 Drawin AI - Architecture Documentation
 
 ## 📋 Tổng quan kiến trúc
 
-Finch AI được xây dựng theo mô hình **Multi-Agent Supervisor** với **Knowledge-First approach**, lấy cảm hứng từ kiến trúc Finch của Uber.
+Drawin AI được xây dựng theo mô hình **Multi-Agent Supervisor** với **Knowledge-First approach**, lấy cảm hứng từ kiến trúc Finch của Uber.
 
 ## 🎯 Nguyên tắc thiết kế cốt lõi
 
@@ -260,9 +260,9 @@ SELECT ... -- Query auto-killed after 5s
 
 **Layer 3: Read-only Role**
 ```sql
-CREATE ROLE finch_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO finch_readonly;
-REVOKE INSERT, UPDATE, DELETE ON ALL TABLES FROM finch_readonly;
+CREATE ROLE drawin_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO drawin_readonly;
+REVOKE INSERT, UPDATE, DELETE ON ALL TABLES FROM drawin_readonly;
 ```
 
 **Layer 4: Rate Limiting**

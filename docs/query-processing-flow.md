@@ -1,4 +1,4 @@
-# Query Processing Flow - Finch AI
+# Query Processing Flow - Drawin AI
 
 ## Quá trình xử lý Query từ Input đến Output
 

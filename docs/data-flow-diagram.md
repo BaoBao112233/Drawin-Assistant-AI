@@ -1,4 +1,4 @@
-# Data Flow Diagram - Finch AI
+# Data Flow Diagram - Drawin AI
 
 ## Luồng dữ liệu từ User Question đến Final Answer
 

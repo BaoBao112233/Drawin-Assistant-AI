@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Finch AI - Run Script
+# Drawin AI - Run Script
 
 set -e
 
-echo "🚀 Starting Finch AI..."
+echo "🚀 Starting Drawin AI..."
 
 # Check if venv exists
 if [ ! -d "venv" ]; then

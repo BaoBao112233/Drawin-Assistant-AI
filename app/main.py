@@ -32,17 +32,17 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown."""
     # Startup
-    logger.info("Starting Finch AI application...")
+    logger.info("Starting Drawin AI application...")
     await init_db()
     logger.info("Database initialized")
     yield
     # Shutdown
-    logger.info("Shutting down Finch AI application...")
+    logger.info("Shutting down Drawin AI application...")
 
 
 # Create FastAPI app
 app = FastAPI(
-    title="Finch AI - Agentic SQL Analytics",
+    title="Drawin AI - Agentic SQL Analytics",
     description="AI-powered PostgreSQL analytics with multi-agent architecture",
     version="1.0.0",
     lifespan=lifespan
@@ -75,6 +75,13 @@ class ChatResponse(BaseModel):
     validation_notes: Optional[list] = None
     error: Optional[str] = None
     execution_time_ms: int
+    # Performance telemetry (PPT)
+    db_execution_time_ms: Optional[float] = None   # actual DB round-trip
+    estimated_query_cost: Optional[float] = None   # planner cost units
+    was_result_limited: Optional[bool] = None      # True if auto-LIMIT applied
+    ppt_complexity: Optional[int] = None           # 0-10 complexity score
+    ppt_strategy: Optional[str] = None             # aggregated_table|raw_table|hybrid
+    validation_strategy: Optional[str] = None      # full|lightweight|skip_golden
 
 
 class ReviewRequest(BaseModel):
@@ -122,7 +129,9 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "service": "finch-ai"
+        "service": "drawin-ai",
+        "version": "2.0.0",
+        "architecture": "PPT (Perception-Planning-Tool)"
     }
 
 
@@ -154,14 +163,16 @@ async def chat(
         # If SQL agent was used, validate results
         trust_score = None
         validation_notes = None
-        
+        validation: dict = {}
+
         if response.get("agent_used") == "sql_agent" and response.get("sql"):
             if response.get("results") is not None and not response.get("error"):
                 validation = await validator_agent.validate_query(
                     db,
                     request.question,
                     response["sql"],
-                    response["results"]
+                    response["results"],
+                    estimated_cost=response.get("estimated_cost"),
                 )
                 trust_score = validation["trust_score"]
                 validation_notes = validation["validation_notes"]
@@ -198,6 +209,12 @@ async def chat(
             row_count=response.get("row_count"),
             confidence_score=response.get("confidence_score"),
             trust_score=trust_score,
+            db_execution_time_ms=response.get("execution_time_ms"),
+            estimated_query_cost=response.get("estimated_cost"),
+            was_result_limited=response.get("was_limited"),
+            ppt_complexity=response.get("ppt_complexity"),
+            ppt_strategy=response.get("ppt_strategy"),
+            validation_strategy=validation.get("validation_strategy") if trust_score is not None else None,
             validation_notes=validation_notes,
             error=response.get("error"),
             execution_time_ms=execution_time_ms

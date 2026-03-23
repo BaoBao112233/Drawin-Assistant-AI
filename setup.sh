@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Finch AI - Quick Setup Script
+# Drawin AI - Quick Setup Script
 
 set -e
 
 echo "=================================================="
-echo "🚀 Finch AI - Quick Setup"
+echo "🚀 Drawin AI - Quick Setup"
 echo "=================================================="
 
 # Colors
@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 
 # Check if we're in the right directory
 if [ ! -f "requirements.txt" ]; then
-    echo -e "${RED}❌ Error: Must run from finch_ai directory${NC}"
+    echo -e "${RED}❌ Error: Must run from drawin_ai directory${NC}"
     exit 1
 fi
 

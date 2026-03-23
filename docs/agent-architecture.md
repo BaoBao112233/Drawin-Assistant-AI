@@ -1,4 +1,4 @@
-# Multi-Agent Architecture - Finch AI
+# Multi-Agent Architecture - Drawin AI
 
 ## Kiến trúc Multi-Agent System
 
