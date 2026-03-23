@@ -1,14 +1,16 @@
 """FastAPI main application."""
+import asyncio
+import json
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, desc, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +21,8 @@ from app.agents.supervisor import supervisor
 from app.agents.validator import validator_agent
 from app.security import rate_limiter
 from app.ai_gateway import ai_gateway
+from app.progress import set_emitter
+from app.chart_generator import try_generate_chart
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +30,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# In-memory SSE event queues keyed by session_id
+_session_queues: dict[str, asyncio.Queue] = {}
 
 
 @asynccontextmanager
@@ -60,6 +67,7 @@ app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 class ChatRequest(BaseModel):
     question: str
     model: Optional[str] = None
+    session_id: Optional[str] = None   # if set, progress events are emitted to /api/events/{session_id}
 
 
 class ChatResponse(BaseModel):
@@ -82,6 +90,8 @@ class ChatResponse(BaseModel):
     ppt_complexity: Optional[int] = None           # 0-10 complexity score
     ppt_strategy: Optional[str] = None             # aggregated_table|raw_table|hybrid
     validation_strategy: Optional[str] = None      # full|lightweight|skip_golden
+    chart_image: Optional[str] = None              # base64 PNG (data URI content)
+    chart_type: Optional[str] = None               # bar|line|pie|horizontal_bar|multi_bar
 
 
 class ReviewRequest(BaseModel):
@@ -135,6 +145,54 @@ async def health_check():
     }
 
 
+@app.get("/api/events/{session_id}")
+async def sse_events(session_id: str, request: Request):
+    """
+    Server-Sent Events stream for a given session.
+    Clients connect here to receive streamed updates while a query runs.
+    """
+
+    # Create a queue for this session if it doesn't exist yet
+    if session_id not in _session_queues:
+        _session_queues[session_id] = asyncio.Queue()
+
+    queue: asyncio.Queue = _session_queues[session_id]
+
+    async def event_stream() -> AsyncGenerator[bytes, None]:
+        try:
+            while True:
+                # Honour client disconnects
+                if await request.is_disconnected():
+                    break
+
+                try:
+                    # Wait up to 25 s for a real event; send a heartbeat comment
+                    # if nothing arrives so the connection stays alive.
+                    event_data = await asyncio.wait_for(queue.get(), timeout=25)
+                    yield f"data: {json.dumps(event_data)}\n\n".encode()
+                    queue.task_done()
+
+                    # Sentinel: close the stream gracefully after the final event
+                    if event_data.get("type") == "done":
+                        break
+
+                except asyncio.TimeoutError:
+                    # SSE heartbeat comment (ignored by browsers, keeps TCP alive)
+                    yield b": heartbeat\n\n"
+
+        finally:
+            _session_queues.pop(session_id, None)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
@@ -146,18 +204,34 @@ async def chat(
     Routes to appropriate agent via supervisor.
     """
     start_time = time.time()
-    
+
+    # ── SSE progress emitter setup ───────────────────────────────────────────
+    emitter_token = None
+    if request.session_id:
+        sid = request.session_id
+        if sid not in _session_queues:
+            _session_queues[sid] = asyncio.Queue()
+        _queue = _session_queues[sid]
+
+        async def _emit(event: dict) -> None:
+            try:
+                await _queue.put(event)
+            except Exception:
+                pass
+
+        emitter_token = set_emitter(_emit)
+
     # Rate limiting
     client_ip = req.client.host
     is_allowed, error_msg = rate_limiter.is_allowed(client_ip)
-    
+
     if not is_allowed:
         raise HTTPException(status_code=429, detail=error_msg)
-    
+
     try:
         # Route query through supervisor
         logger.info(f"Processing question: {request.question}")
-        
+
         response = await supervisor.route_query(request.question, db)
         
         # If SQL agent was used, validate results
@@ -198,8 +272,24 @@ async def chat(
             logger.error(f"Failed to save query history: {hist_error}")
             await db.rollback()
         
+        # Auto-generate chart for SQL agent results
+        chart_result = None
+        if (
+            response.get("agent_used") == "sql_agent"
+            and response.get("results")
+            and not response.get("error")
+        ):
+            try:
+                chart_result = try_generate_chart(
+                    response["results"],
+                    request.question,
+                    response.get("sql", ""),
+                )
+            except Exception as chart_err:
+                logger.warning(f"Chart generation failed (non-fatal): {chart_err}")
+
         # Build response
-        return ChatResponse(
+        chat_response = ChatResponse(
             question=request.question,
             agent_used=response.get("agent_used", "unknown"),
             sql=response.get("sql"),
@@ -217,12 +307,30 @@ async def chat(
             validation_strategy=validation.get("validation_strategy") if trust_score is not None else None,
             validation_notes=validation_notes,
             error=response.get("error"),
-            execution_time_ms=execution_time_ms
+            execution_time_ms=execution_time_ms,
+            chart_image=chart_result.get("chart_b64") if chart_result else None,
+            chart_type=chart_result.get("chart_type") if chart_result else None,
         )
-        
+
+        # Signal SSE stream that processing is complete
+        if request.session_id and request.session_id in _session_queues:
+            await _session_queues[request.session_id].put({
+                "type": "done",
+                "execution_time_ms": execution_time_ms,
+            })
+
+        return chat_response
+
     except Exception as e:
         logger.error(f"Chat error: {e}")
         execution_time_ms = int((time.time() - start_time) * 1000)
+
+        if request.session_id and request.session_id in _session_queues:
+            await _session_queues[request.session_id].put({
+                "type": "done",
+                "error": str(e),
+                "execution_time_ms": execution_time_ms,
+            })
         
         return ChatResponse(
             question=request.question,
@@ -447,6 +555,20 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
         logger.error(f"Error fetching stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get('/api/events/{session_id}')
+async def get_session_events(session_id: str):
+    events = SessionEvent.query.filter_by(session_id=session_id).all()
+    return {
+        'session_id': session_id,
+        'events': [
+            {
+                'timestamp': event.timestamp.isoformat(),
+                'event_type': event.event_type,
+                'payload': event.payload
+            } for event in events
+        ]
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -13,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U drawin_user"]
+      test: ["CMD-SHELL", "pg_isready -U drawin_user -d drawin_db"]
       interval: 10s
       timeout: 5s
       retries: 5

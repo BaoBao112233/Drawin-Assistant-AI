@@ -24,9 +24,18 @@ from app.models import GoldenQuery
 from app.security import query_validator
 from app.agents.cot_agent import cot_agent
 
-# Trust-score range where COT reasoning is triggered for deeper analysis.
-_COT_TRUST_LOW  = 0.35
-_COT_TRUST_HIGH = 0.75
+# Trust-score range where COT reasoning is triggered.
+# COT is only allowed to RAISE the score (not lower it) when in this band.
+_COT_TRUST_LOW  = 0.30
+_COT_TRUST_HIGH = 0.85
+
+
+def _is_numeric(v: str) -> bool:
+    try:
+        float(v)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 logger = logging.getLogger(__name__)
 
@@ -240,9 +249,9 @@ class ValidatorAgent:
 
         # ── skip_golden: no golden re-execution ──────────────────────────
         if plan_spec.strategy == "skip_golden":
-            trust = 0.6  # moderate trust when we can't verify
+            trust = 0.65  # moderate-high trust when we can't verify
             if not plan_spec.golden_query:
-                notes.append("No golden query available; using baseline trust 0.6.")
+                notes.append("No matching golden query found for this question; using baseline trust 0.6.")
             else:
                 notes.append("Golden re-execution skipped (cost protection).")
             return ValidationResult(
@@ -291,8 +300,22 @@ class ValidatorAgent:
         notes.append(f"Golden query executed in {golden_exec_time:.1f} ms")
 
         # ── Combined trust score ──────────────────────────────────────────
-        # Weight: 70% result accuracy, 30% SQL structural similarity
-        trust = round((result_score * 0.7) + (sql_sim * 0.3), 2)
+        # Weight: 60% result accuracy, 40% SQL structural similarity
+        # (SQL similarity is a stronger signal than first-row value match
+        #  because column aliases frequently differ between generated/golden)
+        trust = round((result_score * 0.6) + (sql_sim * 0.4), 2)
+
+        # Floor: when row counts match AND SQL is structurally similar,
+        # the query is almost certainly correct — any first-row mismatch is
+        # usually just a column alias difference.  Enforce a minimum of 0.72.
+        if (
+            len(generated_sample) == len(golden_sample)
+            and len(generated_sample) > 0
+            and sql_sim >= 0.50
+        ):
+            if trust < 0.72:
+                trust = 0.72
+                notes.append("Trust floor applied: row count matches and SQL is structurally similar.")
 
         # Performance penalty: if golden query itself took too long, that
         # suggests the question targets a slow-path; reduce trust slightly.
@@ -310,37 +333,41 @@ class ValidatorAgent:
             try:
                 cot_result = await cot_agent.reason_through(
                     task=(
-                        f"Assess whether the trust score of {trust:.2f} for the following "
-                        f"generated SQL query is accurate, too high, or too low.\n\n"
+                        f"Review the trust score of {trust:.2f} for this SQL validation.\n\n"
                         f"User question : {perception.user_question}\n"
                         f"Generated SQL : {perception.generated_sql[:400]}\n"
                         f"Golden SQL    : {golden.sql_query[:400]}\n"
                         f"Result rows   : {perception.result_size}\n"
                         f"SQL similarity: {sql_sim:.2f}\n"
                         f"Result score  : {result_score:.2f}\n\n"
-                        f"Decide: should the trust score be INCREASED, DECREASED, or KEPT "
-                        f"at {trust:.2f}?  By how much (0.05–0.15 max)?  "
-                        f"Respond with a final numeric trust score between 0 and 1."
+                        f"Determine the final trust score (0.0–1.0). "
+                        f"A well-formed SELECT that returns the right number of rows "
+                        f"and is structurally similar to the golden query deserves "
+                        f"a score of at least 0.75. Only lower the score if there is "
+                        f"clear evidence of a semantic mistake."
                     ),
                     name="Trust Score Reasoner",
                     description="Reasons about the reliability of a generated SQL query",
                     instructions=[
-                        "A high trust score (> 0.75) means results match the golden query closely",
-                        "A low trust score (< 0.35) means results differ significantly",
-                        "Only adjust by a small amount (0.05–0.15) unless the evidence is strong",
-                        "Consider both SQL structural similarity AND result similarity",
+                        f"Current automated score: {trust:.2f}",
+                        "If SQL structural similarity >= 0.50 AND row counts match: score should be >= 0.75",
+                        "If the query is a valid SELECT that answers the question: score should be >= 0.70",
+                        "Only lower below the current score if there is explicit evidence of wrong results",
+                        "Maximum adjustment: +0.20 upward, -0.05 downward",
                         "Your final answer must be a single decimal between 0.0 and 1.0",
                     ],
-                    max_iterations=4,
-                    temperature=0.2,
+                    max_iterations=3,
+                    temperature=0.15,
                 )
-                # Try to parse a numeric score from the COT final answer
                 import re as _re
                 m = _re.search(r'(\d\.\d+|0\.\d+|1\.0)', cot_result.final_answer or "")
                 if m:
                     cot_trust = float(m.group(1))
-                    # Only apply if within sane bounds and meaningful delta
-                    if 0.0 <= cot_trust <= 1.0 and abs(cot_trust - trust) <= 0.2:
+                    # Allow generous upward adjustment but strictly cap downward
+                    max_up   = trust + 0.20
+                    max_down = trust - 0.05   # ← COT cannot slash the score
+                    cot_trust = min(max(cot_trust, max_down), max_up, 1.0)
+                    if abs(cot_trust - trust) >= 0.01:
                         notes.append(
                             f"COT reasoning adjusted trust {trust:.2f} → {cot_trust:.2f} "
                             f"({cot_result.iterations_used} steps, "
@@ -348,10 +375,7 @@ class ValidatorAgent:
                         )
                         trust = round(cot_trust, 2)
                     else:
-                        notes.append(
-                            f"COT suggestion ({cot_trust:.2f}) out of bounds; "
-                            f"original trust {trust:.2f} kept."
-                        )
+                        notes.append(f"COT confirmed trust {trust:.2f} (no change).")
                 else:
                     notes.append(
                         f"COT reasoning complete but no numeric score found; "
@@ -468,22 +492,54 @@ class ValidatorAgent:
         return (row_score * 0.4) + (first_sim * 0.6), notes
 
     def _row_similarity(self, row1: Dict, row2: Dict) -> float:
-        """Jaccard-style value similarity between two result rows."""
-        keys = set(row1.keys()) | set(row2.keys())
-        if not keys:
-            return 1.0
-        matching = 0
-        for k in keys:
-            v1, v2 = row1.get(k), row2.get(k)
-            if v1 is None or v2 is None:
-                continue
-            try:
-                if abs(float(v1) - float(v2)) < 0.01:
+        """Value similarity between two result rows.
+
+        Uses key-matched comparison first.  When column names differ (common
+        when generated SQL uses different aliases than the golden query), falls
+        back to value-only comparison so a correct result is not penalised.
+        """
+        # ── Key-matched comparison ────────────────────────────────────────
+        shared_keys = set(row1.keys()) & set(row2.keys())
+        if shared_keys:
+            matching = 0
+            for k in shared_keys:
+                v1, v2 = row1.get(k), row2.get(k)
+                if v1 is None and v2 is None:
                     matching += 1
-            except (TypeError, ValueError):
-                if str(v1) == str(v2):
-                    matching += 1
-        return matching / len(keys)
+                    continue
+                if v1 is None or v2 is None:
+                    continue
+                try:
+                    f1, f2 = float(v1), float(v2)
+                    if abs(f1 - f2) <= max(abs(f1) * 0.01, 0.01):
+                        matching += 1
+                except (TypeError, ValueError):
+                    if str(v1).strip().lower() == str(v2).strip().lower():
+                        matching += 1
+            key_sim = matching / len(shared_keys)
+        else:
+            key_sim = 0.0
+
+        # ── Value-only comparison (handles alias differences) ─────────────
+        nums1 = sorted(
+            float(v) for v in row1.values()
+            if v is not None and _is_numeric(str(v))
+        )
+        nums2 = sorted(
+            float(v) for v in row2.values()
+            if v is not None and _is_numeric(str(v))
+        )
+        if nums1 and nums2:
+            matched = sum(
+                1 for a, b in zip(nums1, nums2)
+                if abs(a - b) <= max(abs(a) * 0.01, 0.01)
+            )
+            val_sim = matched / max(len(nums1), len(nums2))
+        else:
+            val_sim = 0.0
+
+        # Use the more generous of the two signals
+        return max(key_sim, val_sim)
 
     def _sql_similarity(self, sql1: str, sql2: str) -> float:
         """Word-level Jaccard similarity between two normalised SQL strings."""

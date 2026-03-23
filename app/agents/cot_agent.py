@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 
 from app.ai_gateway import ai_gateway
+from app.progress import emit
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,20 @@ class COTAgent:
 
             # Feed the assistant response back into history
             history.append(f"[Assistant]\n{raw}")
+
+            # Emit this step as a progress event
+            step_icon = {"reason": "💡", "reflection": "🤔", "answer": "✅"}.get(route, "▶️")
+            step_text = step.thought or step.observation or step.reflection or step.final_answer or ""
+            await emit({
+                "type": "cot_step",
+                "iteration": iteration,
+                "route": route,
+                "thought": step.thought,
+                "observation": step.observation,
+                "reflection": step.reflection,
+                "final_answer": step.final_answer,
+                "text": f"{step_icon} COT Step {iteration} [{route.upper()}]: {step_text[:200]}",
+            })
 
             if route == "answer":
                 final_answer = parsed.get("Final Answer") or raw

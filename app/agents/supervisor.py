@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai_gateway import ai_gateway
 from app.agents.cot_agent import cot_agent
+from app.progress import emit
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,6 @@ REASON: <one short sentence>"""
             f"doc_signal={has_doc} len={len(user_question)}"
         )
         return perception
-
     # ── Phase 2 – Planning ───────────────────────────────────────────────────
 
     async def plan(self, perception: SupervisorPerception) -> SupervisorPlan:
@@ -221,10 +221,31 @@ REASON: <one short sentence>"""
         supervisor_plan metadata.
         """
         # Perception
+        await emit({"type": "supervisor", "phase": "perception",
+                    "text": "🔍 Supervisor: Analysing question..."})
         perception = self.perceive(user_question)
+        await emit({"type": "supervisor", "phase": "perception_done",
+                    "data_signal": perception.has_data_keywords,
+                    "doc_signal":  perception.has_doc_keywords,
+                    "text": (
+                        f"🔍 Signals detected — "
+                        f"data={'yes' if perception.has_data_keywords else 'no'}, "
+                        f"doc={'yes' if perception.has_doc_keywords else 'no'}"
+                    )})
 
         # Planning
+        await emit({"type": "supervisor", "phase": "planning",
+                    "text": "🤔 Supervisor: Classifying intent..."})
         plan = await self.plan(perception)
+        await emit({"type": "supervisor", "phase": "routing",
+                    "intent": plan.intent,
+                    "confidence": plan.confidence,
+                    "reasoning": plan.reasoning,
+                    "text": (
+                        f"🎯 Routing to → "
+                        f"{'SQL Agent' if plan.intent == 'sql_query' else 'Doc Agent'} "
+                        f"(confidence: {plan.confidence.upper()})"
+                    )})
 
         # Tool / Action
         return await self.act(plan, perception, db)
@@ -233,6 +254,3 @@ REASON: <one short sentence>"""
 # Global singleton
 supervisor = SupervisorAgent()
 
-
-# Global instance
-supervisor = SupervisorAgent()

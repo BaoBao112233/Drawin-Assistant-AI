@@ -23,6 +23,7 @@ from app.ai_gateway import ai_gateway
 from app.metadata import metadata_service
 from app.security import query_validator
 from app.agents.cot_agent import cot_agent, COTResult
+from app.progress import emit
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,8 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
 
     async def perceive(self, user_question: str, db: AsyncSession) -> SQLPerception:
         """Collect metadata context and score query complexity."""
+        await emit({"type": "sql_agent", "phase": "perception",
+                    "text": "🧠 SQL Agent: Building knowledge context..."})
         logger.info("[SQLAgent|Perception] Building knowledge context...")
 
         context = await metadata_service.build_context_for_query(db, user_question)
@@ -176,6 +179,13 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
             f"[SQLAgent|Perception] complexity={p.complexity_score} "
             f"tables={p.detected_tables} agg={has_aggregation} date={has_date_filter}"
         )
+        await emit({"type": "sql_agent", "phase": "perception_done",
+                    "complexity": p.complexity_score,
+                    "tables": p.detected_tables,
+                    "text": (
+                        f"📊 Complexity: {p.complexity_score}/10 — "
+                        f"tables: {', '.join(p.detected_tables) or 'auto-detect'}"
+                    )})
         return p
 
     # ── Phase 2 – Planning ───────────────────────────────────────────────────
@@ -206,6 +216,12 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
             f"[SQLAgent|Planning] strategy={strategy_hint} "
             f"timeout={timeout_s}s row_limit={row_cap} explain={need_explain}"
         )
+        await emit({"type": "sql_agent", "phase": "planning",
+                    "strategy": strategy_hint, "timeout": timeout_s,
+                    "text": (
+                        f"⚙️ Strategy: {strategy_hint} | "
+                        f"timeout: {timeout_s}s | row cap: {row_cap}"
+                    )})
 
         # ── COT pre-reasoning (complexity >= 3) ───────────────────────────
         # For non-trivial queries, run a chain-of-thought reasoning pass to
@@ -214,6 +230,8 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
         # so the SQL-generation LLM has a full reasoning trail.
         cot_trace_text = ""
         if c >= 3:
+            await emit({"type": "sql_agent", "phase": "cot_start",
+                        "text": f"🔗 Chain-of-Thought reasoning starting (max 4 steps)..."})
             cot_result: COTResult = await cot_agent.reason_through(
                 task=(
                     f"Determine the best PostgreSQL query strategy for:\n"
@@ -246,6 +264,13 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
                 f"iterations={cot_result.iterations_used} "
                 f"time={cot_result.total_time_ms:.0f}ms"
             )
+            await emit({"type": "sql_agent", "phase": "cot_done",
+                        "iterations": cot_result.iterations_used,
+                        "converged": cot_result.converged,
+                        "text": (
+                            f"✅ COT reasoning done — {cot_result.iterations_used} steps, "
+                            f"converged={cot_result.converged}"
+                        )})
 
         system_prompt = self.GENERATION_PROMPT.replace("{row_limit}", str(row_cap))
         plan_ctx = (
@@ -273,6 +298,16 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
         explanation = self._extract_explanation(raw)
         confidence  = self._extract_confidence(raw)
         strategy    = self._extract_strategy(raw) or strategy_hint
+
+        # Strip any trailing semicolon the LLM may have added BEFORE
+        # auto-appending LIMIT, otherwise EXPLAIN gets "... ; LIMIT n"
+        if sql:
+            sql = sql.rstrip(';').strip()
+
+        await emit({"type": "sql_agent", "phase": "sql_generated",
+                    "sql_preview": (sql or "")[:120],
+                    "confidence": confidence,
+                    "text": f"📝 SQL generated (confidence: {confidence:.0%})"})
 
         # Auto-inject LIMIT when absent
         was_auto_limited = False
@@ -315,6 +350,8 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
         # 3b. Optional EXPLAIN cost estimate
         estimated_cost: Optional[float] = None
         if plan.require_explain:
+            await emit({"type": "sql_agent", "phase": "explain",
+                        "text": "🔎 Running EXPLAIN cost analysis..."})
             estimated_cost = await self._estimate_query_cost(db, sql)
             logger.info(f"[SQLAgent|Tool] EXPLAIN planner cost = {estimated_cost}")
 
@@ -331,11 +368,24 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
                 )
 
         # 3c. Execute with calibrated timeout
+        await emit({"type": "sql_agent", "phase": "executing",
+                    "text": f"⚡ Executing SQL (timeout: {plan.timeout_seconds}s)..."})
         exec_start = time.time()
         success, results, exec_error = await query_validator.execute_safe_query(
             db, sql, timeout_seconds=plan.timeout_seconds
         )
         execution_time_ms = (time.time() - exec_start) * 1000
+
+        await emit({"type": "sql_agent", "phase": "executed",
+                    "success": success,
+                    "rows": len(results) if results else 0,
+                    "exec_ms": round(execution_time_ms),
+                    "text": (
+                        f"✅ Executed in {execution_time_ms:.0f}ms — "
+                        f"{len(results) if results else 0} rows"
+                        if success else
+                        f"❌ Execution failed: {exec_error}"
+                    )})
 
         logger.info(
             f"[SQLAgent|Tool] success={success} rows={len(results) if results else 0} "
@@ -398,20 +448,30 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
     async def _estimate_query_cost(
         self, db: AsyncSession, sql: str
     ) -> Optional[float]:
-        """EXPLAIN (ANALYZE FALSE) → return planner Total Cost, or None on failure."""
+        """EXPLAIN (ANALYZE FALSE) → return planner Total Cost, or None on failure.
+
+        Wrapped in a SAVEPOINT so a failed EXPLAIN never poisons the outer
+        transaction (asyncpg marks the session as aborted on any error).
+        """
         try:
-            row = await db.execute(
-                text(f"EXPLAIN (FORMAT JSON, ANALYZE FALSE) {sql}")
-            )
-            data = row.fetchone()
-            if data:
-                plan_json = data[0]
-                if isinstance(plan_json, str):
-                    plan_json = json.loads(plan_json)
-                cost = plan_json[0].get("Plan", {}).get("Total Cost")
-                return float(cost) if cost is not None else None
+            sp = await db.begin_nested()   # SAVEPOINT
+            try:
+                row = await db.execute(
+                    text(f"EXPLAIN (FORMAT JSON, ANALYZE FALSE) {sql}")
+                )
+                data = row.fetchone()
+                await sp.commit()
+                if data:
+                    plan_json = data[0]
+                    if isinstance(plan_json, str):
+                        plan_json = json.loads(plan_json)
+                    cost = plan_json[0].get("Plan", {}).get("Total Cost")
+                    return float(cost) if cost is not None else None
+            except Exception as inner:
+                await sp.rollback()        # roll back ONLY to the savepoint
+                logger.warning(f"[SQLAgent] EXPLAIN skipped: {inner}")
         except Exception as e:
-            logger.warning(f"[SQLAgent] EXPLAIN skipped: {e}")
+            logger.warning(f"[SQLAgent] EXPLAIN savepoint error: {e}")
         return None
 
     def _extract_sql(self, response: str) -> Optional[str]:

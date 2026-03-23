@@ -113,42 +113,37 @@ class QuerySecurityValidator:
         sql = self.sanitize_query(sql)
         
         try:
-            # Set statement timeout
-            await db.execute(text(f"SET statement_timeout = '{timeout_seconds}s'"))
-            
-            # Execute query
-            result = await db.execute(text(sql))
-            
-            # Fetch results
-            rows = result.fetchall()
-            
-            # Convert to list of dicts
-            if rows:
-                columns = result.keys()
-                results = [dict(zip(columns, row)) for row in rows]
-            else:
-                results = []
-            
-            # Reset timeout
-            await db.execute(text("RESET statement_timeout"))
-            
-            return True, results, None
-            
+            # Use a SAVEPOINT so any failure is contained and the outer
+            # session/transaction is not left in an aborted state.
+            sp = await db.begin_nested()
+            try:
+                # SET LOCAL is automatically reversed when the savepoint ends.
+                await db.execute(
+                    text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
+                )
+
+                result = await db.execute(text(sql))
+                rows = result.fetchall()
+
+                if rows:
+                    columns = result.keys()
+                    results = [dict(zip(columns, row)) for row in rows]
+                else:
+                    results = []
+
+                await sp.commit()
+                return True, results, None
+
+            except Exception as inner:
+                logger.error(f"Query execution error: {inner}")
+                try:
+                    await sp.rollback()
+                except Exception:
+                    pass
+                return False, None, str(inner)
+
         except Exception as e:
-            logger.error(f"Query execution error: {e}")
-            
-            # Rollback transaction
-            try:
-                await db.rollback()
-            except:
-                pass
-            
-            # Reset timeout
-            try:
-                await db.execute(text("RESET statement_timeout"))
-            except:
-                pass
-            
+            logger.error(f"Savepoint creation error: {e}")
             return False, None, str(e)
     
     def extract_table_names(self, sql: str) -> list:

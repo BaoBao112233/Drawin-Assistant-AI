@@ -33,6 +33,17 @@
 
             <!-- Center: Chat Interface -->
             <main class="chat-section">
+                <!-- Agent Thinking Panel (live SSE progress) -->
+                <div id="thinking-panel" class="thinking-panel" style="display:none;">
+                    <div class="thinking-header" onclick="toggleThinkingPanel()">
+                        <span id="thinking-title">🧠 Agent Thinking</span>
+                        <span id="thinking-chevron" class="thinking-chevron">▾</span>
+                    </div>
+                    <div id="thinking-body" class="thinking-body">
+                        <div id="thinking-steps" class="thinking-steps"></div>
+                    </div>
+                </div>
+
                 <div class="chat-container">
                     <div id="chat-messages" class="chat-messages">
                         <div class="welcome-message">
@@ -60,7 +71,7 @@
                         >
                         <button onclick="sendMessage()" id="send-btn">Send</button>
                     </div>
-                </div>
+                </div><!-- /.chat-container -->
             </main>
 
             <!-- Right Sidebar: Query History -->
@@ -75,21 +86,21 @@
 
     <script>
         let currentQueryId = null;
+        let _thinkingCollapsed = false;
 
-        // Load tables on startup
+        // ── Startup ────────────────────────────────────────────────────────
         window.addEventListener('DOMContentLoaded', () => {
             loadTables();
             loadQueryHistory();
         });
 
+        // ── Table loading ──────────────────────────────────────────────────
         async function loadTables() {
             try {
                 const response = await fetch('/tables');
                 const data = await response.json();
-                
                 const tablesList = document.getElementById('tables-list');
                 tablesList.innerHTML = '';
-                
                 data.tables.forEach(table => {
                     const tableItem = document.createElement('div');
                     tableItem.className = 'table-item';
@@ -98,15 +109,12 @@
                         <div class="table-meta">
                             <span class="badge ${table.type}">${table.type}</span>
                             <span class="row-count">${table.row_count.toLocaleString()} rows</span>
-                        </div>
-                    `;
+                        </div>`;
                     tableItem.onclick = () => loadTablePreview(table.name);
                     tablesList.appendChild(tableItem);
                 });
             } catch (error) {
-                console.error('Error loading tables:', error);
-                document.getElementById('tables-list').innerHTML = 
-                    '<p class="error">Failed to load tables</p>';
+                document.getElementById('tables-list').innerHTML = '<p class="error">Failed to load tables</p>';
             }
         }
 
@@ -114,154 +122,199 @@
             try {
                 const response = await fetch(`/table/${tableName}`);
                 const data = await response.json();
-                
                 const preview = document.getElementById('table-preview');
                 preview.style.display = 'block';
-                
                 document.getElementById('preview-title').textContent = tableName;
-                
-                // Schema
-                const schemaBox = document.getElementById('preview-schema');
-                schemaBox.innerHTML = '<strong>Schema:</strong><br>' + 
-                    data.schema.map(col => 
-                        `<span class="column">${col.name}: ${col.type}</span>`
-                    ).join('<br>');
-                
-                // Preview data
+                document.getElementById('preview-schema').innerHTML = '<strong>Schema:</strong><br>' +
+                    data.schema.map(col => `<span class="column">${col.name}: ${col.type}</span>`).join('<br>');
                 const previewData = document.getElementById('preview-data');
                 if (data.preview_data.length > 0) {
-                    previewData.innerHTML = `
-                        <strong>Preview (first ${data.preview_row_count} rows):</strong>
-                        ${renderTable(data.preview_data)}
-                    `;
+                    previewData.innerHTML = `<strong>Preview (first ${data.preview_row_count} rows):</strong>${renderTable(data.preview_data)}`;
                 } else {
                     previewData.innerHTML = '<p>No data to preview</p>';
                 }
-            } catch (error) {
-                console.error('Error loading preview:', error);
-            }
+            } catch (error) { console.error(error); }
         }
 
         async function loadQueryHistory(limit = 10) {
             try {
                 const response = await fetch(`/query-history?limit=${limit}`);
                 const data = await response.json();
-                
                 const historyDiv = document.getElementById('query-history');
                 historyDiv.innerHTML = '';
-                
-                if (data.history.length === 0) {
-                    historyDiv.innerHTML = '<p>No queries yet</p>';
-                    return;
-                }
-                
+                if (data.history.length === 0) { historyDiv.innerHTML = '<p>No queries yet</p>'; return; }
                 data.history.forEach(item => {
                     const historyItem = document.createElement('div');
                     historyItem.className = 'history-item';
-                    
                     let statusBadge = '';
                     if (item.error) {
                         statusBadge = '<span class="badge error">Error</span>';
                     } else if (item.trust_score !== null) {
-                        const trustLevel = item.trust_score >= 0.8 ? 'high' : 
-                                         item.trust_score >= 0.6 ? 'medium' : 'low';
-                        statusBadge = `<span class="badge trust-${trustLevel}">Trust: ${item.trust_score.toFixed(2)}</span>`;
+                        const tl = item.trust_score >= 0.8 ? 'high' : item.trust_score >= 0.6 ? 'medium' : 'low';
+                        statusBadge = `<span class="badge trust-${tl}">Trust: ${item.trust_score.toFixed(2)}</span>`;
                     }
-                    
                     historyItem.innerHTML = `
                         <div class="history-question">${item.question}</div>
                         <div class="history-meta">
                             <span class="badge">${item.agent_used}</span>
                             ${statusBadge}
                             <span class="time">${item.execution_time_ms}ms</span>
-                        </div>
-                    `;
+                        </div>`;
                     historyDiv.appendChild(historyItem);
                 });
-            } catch (error) {
-                console.error('Error loading history:', error);
+            } catch (error) { console.error(error); }
+        }
+
+        // ── Input helpers ─────────────────────────────────────────────────
+        function handleKeyPress(event) { if (event.key === 'Enter') sendMessage(); }
+        function askQuestion(question) { document.getElementById('chat-input').value = question; sendMessage(); }
+
+        // ── Thinking Panel ────────────────────────────────────────────────
+        function toggleThinkingPanel() {
+            _thinkingCollapsed = !_thinkingCollapsed;
+            document.getElementById('thinking-body').style.display = _thinkingCollapsed ? 'none' : 'block';
+            document.getElementById('thinking-chevron').textContent = _thinkingCollapsed ? '▸' : '▾';
+        }
+
+        function showThinkingPanel() {
+            const panel = document.getElementById('thinking-panel');
+            panel.style.display = 'block';
+            document.getElementById('thinking-steps').innerHTML = '';
+            _thinkingCollapsed = false;
+            document.getElementById('thinking-body').style.display = 'block';
+            document.getElementById('thinking-chevron').textContent = '▾';
+            document.getElementById('thinking-title').textContent = '🧠 Agent Thinking...';
+        }
+
+        function hideThinkingPanel() {
+            document.getElementById('thinking-title').textContent = '🧠 Agent Thinking (done)';
+            document.getElementById('thinking-panel').classList.add('thinking-done');
+        }
+
+        function addThinkingStep(event) {
+            const steps = document.getElementById('thinking-steps');
+            const item = document.createElement('div');
+
+            // Determine category class
+            let cls = 'step-info';
+            if (event.type === 'supervisor') {
+                cls = event.phase === 'routing' ? 'step-routing' : 'step-supervisor';
+            } else if (event.type === 'sql_agent') {
+                cls = event.phase === 'executing' || event.phase === 'executed' ? 'step-exec'
+                    : event.phase && event.phase.startsWith('cot') ? 'step-cot'
+                    : 'step-sql';
+            } else if (event.type === 'cot_step') {
+                cls = event.route === 'answer' ? 'step-answer'
+                    : event.route === 'reflection' ? 'step-reflection'
+                    : 'step-cot';
+            } else if (event.type === 'done') {
+                cls = event.error ? 'step-error' : 'step-done';
             }
-        }
 
-        function handleKeyPress(event) {
-            if (event.key === 'Enter') {
-                sendMessage();
+            item.className = `thinking-step ${cls}`;
+
+            // Build content
+            let html = `<span class="step-text">${escapeHtml(event.text || JSON.stringify(event))}</span>`;
+
+            // Extra detail for COT steps
+            if (event.type === 'cot_step' && (event.thought || event.observation || event.reflection)) {
+                html += `<div class="step-detail">`;
+                if (event.thought)      html += `<div><em>Thought:</em> ${escapeHtml(event.thought)}</div>`;
+                if (event.observation)  html += `<div><em>Observe:</em> ${escapeHtml(event.observation)}</div>`;
+                if (event.reflection)   html += `<div><em>Reflect:</em> ${escapeHtml(event.reflection)}</div>`;
+                if (event.final_answer) html += `<div><em>Answer:</em> ${escapeHtml(event.final_answer)}</div>`;
+                html += `</div>`;
             }
+
+            // Extra detail for routing
+            if (event.type === 'supervisor' && event.phase === 'routing') {
+                html += `<div class="step-detail">
+                    <em>Confidence:</em> ${event.confidence || '?'} &nbsp;|&nbsp;
+                    <em>Reason:</em> ${escapeHtml(event.reasoning || '')}
+                </div>`;
+            }
+
+            item.innerHTML = html;
+            steps.appendChild(item);
+            steps.scrollTop = steps.scrollHeight;
         }
 
-        function askQuestion(question) {
-            document.getElementById('chat-input').value = question;
-            sendMessage();
-        }
-
+        // ── Main send / SSE flow ───────────────────────────────────────────
         async function sendMessage() {
             const input = document.getElementById('chat-input');
             const question = input.value.trim();
-            
             if (!question) return;
-            
-            // Disable input
+
             input.disabled = true;
             document.getElementById('send-btn').disabled = true;
-            
-            // Add user message to chat
             addMessage('user', question);
-            
-            // Clear input
             input.value = '';
-            
+
+            // Generate a unique session id for this request
+            const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+
+            // Open SSE connection BEFORE posting /chat so we don't miss early events
+            showThinkingPanel();
+            let es = null;
+            const sseReady = new Promise(resolve => {
+                es = new EventSource(`/api/events/${sessionId}`);
+                es.onopen = () => resolve();
+                // Fallback: resolve after 300 ms even if onopen doesn't fire
+                setTimeout(resolve, 300);
+            });
+
+            es.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    addThinkingStep(event);
+                    if (event.type === 'done') {
+                        es.close();
+                        hideThinkingPanel();
+                    }
+                } catch (_) {}
+            };
+            es.onerror = () => { es.close(); hideThinkingPanel(); };
+
+            // Wait for SSE to open, then POST
+            await sseReady;
+            const loadingId = addMessage('assistant', 'Processing...', true);
+
             try {
-                // Show loading
-                const loadingId = addMessage('assistant', 'Thinking...', true);
-                
-                // Send request
                 const response = await fetch('/chat', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ question })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question, session_id: sessionId })
                 });
-                
                 const data = await response.json();
-                
-                // Remove loading message
                 document.getElementById(loadingId).remove();
-                
-                // Add response
                 addChatResponse(data);
-                
-                // Reload history
                 loadQueryHistory();
-                
             } catch (error) {
-                console.error('Error:', error);
+                document.getElementById(loadingId).remove();
                 addMessage('assistant', 'Sorry, an error occurred: ' + error.message);
+                es.close();
+                hideThinkingPanel();
             } finally {
-                // Re-enable input
                 input.disabled = false;
                 document.getElementById('send-btn').disabled = false;
                 input.focus();
             }
         }
 
+        // ── Message rendering ─────────────────────────────────────────────
         function addMessage(role, content, isLoading = false) {
             const messagesDiv = document.getElementById('chat-messages');
             const messageId = 'msg-' + Date.now();
-            
             const messageDiv = document.createElement('div');
             messageDiv.id = messageId;
             messageDiv.className = `message ${role}`;
-            
             if (isLoading) {
                 messageDiv.innerHTML = `<div class="loading-dots">${content}</div>`;
             } else {
                 messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
             }
-            
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            
             return messageId;
         }
 
@@ -269,112 +322,68 @@
             const messagesDiv = document.getElementById('chat-messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message assistant response-card';
-            
             let html = '<div class="response-content">';
-            
-            // Agent info
             html += `<div class="response-header">
                 <span class="badge">${data.agent_used}</span>
                 <span class="time">${data.execution_time_ms}ms</span>
             </div>`;
-            
-            // Error handling
-            if (data.error) {
-                html += `<div class="error-box">❌ ${data.error}</div>`;
-            }
-            
-            // Doc agent response
-            if (data.agent_used === 'doc_agent' && data.answer) {
+            if (data.error) html += `<div class="error-box">❌ ${escapeHtml(data.error)}</div>`;
+            if (data.agent_used === 'doc_agent' && data.answer)
                 html += `<div class="answer-box">${escapeHtml(data.answer)}</div>`;
-            }
-            
-            // SQL agent response
-            if (data.sql) {
-                html += `<div class="sql-box">
-                    <strong>Generated SQL:</strong>
-                    <pre><code>${escapeHtml(data.sql)}</code></pre>
-                </div>`;
-            }
-            
-            if (data.explanation) {
-                html += `<div class="explanation-box">
-                    <strong>Explanation:</strong> ${escapeHtml(data.explanation)}
-                </div>`;
-            }
-            
-            // Results table
-            if (data.results && data.results.length > 0) {
-                html += `<div class="results-box">
-                    <strong>Results (${data.row_count} rows):</strong>
-                    ${renderTable(data.results)}
-                </div>`;
-            } else if (data.results && data.results.length === 0) {
+            if (data.sql)
+                html += `<div class="sql-box"><strong>Generated SQL:</strong><pre><code>${escapeHtml(data.sql)}</code></pre></div>`;
+            if (data.explanation)
+                html += `<div class="explanation-box"><strong>Explanation:</strong> ${escapeHtml(data.explanation)}</div>`;
+            if (data.results && data.results.length > 0)
+                html += `<div class="results-box"><strong>Results (${data.row_count} rows):</strong>${renderTable(data.results)}</div>`;
+            else if (data.results && data.results.length === 0)
                 html += '<div class="results-box">No results returned</div>';
-            }
-            
-            // Scores
             if (data.confidence_score !== null || data.trust_score !== null) {
                 html += '<div class="scores-box">';
                 if (data.confidence_score !== null) {
-                    const confLevel = data.confidence_score >= 0.8 ? 'high' : 
-                                    data.confidence_score >= 0.6 ? 'medium' : 'low';
-                    html += `<span class="score confidence-${confLevel}">
-                        Confidence: ${data.confidence_score.toFixed(2)}
-                    </span>`;
+                    const cl = data.confidence_score >= 0.8 ? 'high' : data.confidence_score >= 0.6 ? 'medium' : 'low';
+                    html += `<span class="score confidence-${cl}">Confidence: ${data.confidence_score.toFixed(2)}</span>`;
                 }
                 if (data.trust_score !== null) {
-                    const trustLevel = data.trust_score >= 0.8 ? 'high' : 
-                                     data.trust_score >= 0.6 ? 'medium' : 'low';
-                    html += `<span class="score trust-${trustLevel}">
-                        Trust: ${data.trust_score.toFixed(2)}
-                    </span>`;
+                    const tl = data.trust_score >= 0.8 ? 'high' : data.trust_score >= 0.6 ? 'medium' : 'low';
+                    html += `<span class="score trust-${tl}">Trust: ${data.trust_score.toFixed(2)}</span>`;
                 }
                 html += '</div>';
             }
-            
-            // Validation notes
             if (data.validation_notes && data.validation_notes.length > 0) {
-                html += '<div class="validation-notes">';
-                html += '<strong>Validation:</strong><ul>';
-                data.validation_notes.forEach(note => {
-                    html += `<li>${escapeHtml(note)}</li>`;
-                });
+                html += '<div class="validation-notes"><strong>Validation:</strong><ul>';
+                data.validation_notes.forEach(note => html += `<li>${escapeHtml(note)}</li>`);
                 html += '</ul></div>';
             }
-            
+            if (data.chart_image) {
+                const label = data.chart_type ? data.chart_type.replace('_', ' ') : 'chart';
+                html += `<div class="chart-box">
+                    <strong>&#x1F4CA; Chart (${label}):</strong>
+                    <img class="chart-img" src="data:image/png;base64,${data.chart_image}" alt="${label} chart">
+                </div>`;
+            }
             html += '</div>';
             messageDiv.innerHTML = html;
-            
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
         function renderTable(data) {
             if (!data || data.length === 0) return '<p>No data</p>';
-            
             const keys = Object.keys(data[0]);
-            
             let html = '<table class="results-table"><thead><tr>';
-            keys.forEach(key => {
-                html += `<th>${escapeHtml(key)}</th>`;
-            });
+            keys.forEach(key => html += `<th>${escapeHtml(key)}</th>`);
             html += '</tr></thead><tbody>';
-            
             data.slice(0, 50).forEach(row => {
                 html += '<tr>';
                 keys.forEach(key => {
-                    const value = row[key];
-                    html += `<td>${value !== null ? escapeHtml(String(value)) : '<em>null</em>'}</td>`;
+                    const v = row[key];
+                    html += `<td>${v !== null ? escapeHtml(String(v)) : '<em>null</em>'}</td>`;
                 });
                 html += '</tr>';
             });
-            
             html += '</tbody></table>';
-            
-            if (data.length > 50) {
-                html += `<p class="truncate-notice">Showing first 50 of ${data.length} rows</p>`;
-            }
-            
+            if (data.length > 50) html += `<p class="truncate-notice">Showing first 50 of ${data.length} rows</p>`;
             return html;
         }
 
