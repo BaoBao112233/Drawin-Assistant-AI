@@ -297,13 +297,20 @@ header h1 {
 
 .sql-box pre {
     margin-top: 0.5rem;
-    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    overflow-x: hidden;
 }
 
 .sql-box code {
     color: #e0e0e0;
     font-family: 'Courier New', monospace;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.6;
 }
 
 .explanation-box {

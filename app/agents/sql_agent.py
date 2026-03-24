@@ -117,6 +117,10 @@ Rules:
 - NEVER use SELECT *; always name columns explicitly.
 - Include LIMIT {row_limit} if result could be large and no LIMIT is present.
 - Use indexed columns in WHERE / JOIN conditions where possible.
+- If the user mentions a concept that does not map directly to a table, infer the
+  closest existing equivalent (e.g. 'sản phẩm' / 'product' → vehicle_type or service_type;
+  'khách hàng' → users; 'tài xế' / 'driver' → drivers table).
+- ALWAYS produce a SQL block even when the mapping is approximate; never leave it empty.
 
 Return EXACTLY this format:
 
@@ -304,20 +308,32 @@ Strategy: [aggregated_table | raw_table | hybrid]"""
         if sql:
             sql = sql.rstrip(';').strip()
 
+        # ── Guard: LLM failed to emit any SQL ────────────────────────────
+        if not sql:
+            logger.warning(
+                "[SQLAgent|Planning] LLM returned no SQL block. "
+                f"Question: {perception.user_question[:120]}"
+            )
+            raise ValueError(
+                "Không thể tạo câu truy vấn SQL cho câu hỏi này. "
+                "Cơ sở dữ liệu có thể không chứa dữ liệu liên quan. "
+                f"('{perception.user_question[:80]}')"
+            )
+
         await emit({"type": "sql_agent", "phase": "sql_generated",
-                    "sql_preview": (sql or "")[:120],
+                    "sql_preview": sql[:120],
                     "confidence": confidence,
                     "text": f"📝 SQL generated (confidence: {confidence:.0%})"})
 
         # Auto-inject LIMIT when absent
         was_auto_limited = False
-        if sql and "LIMIT" not in sql.upper():
+        if "LIMIT" not in sql.upper():
             sql += f"\nLIMIT {row_cap}"
             was_auto_limited = True
             logger.info(f"[SQLAgent|Planning] Auto-applied LIMIT {row_cap}")
 
         return QueryPlan(
-            generated_sql=sql or "",
+            generated_sql=sql,
             explanation=explanation,
             confidence=confidence,
             strategy=strategy,

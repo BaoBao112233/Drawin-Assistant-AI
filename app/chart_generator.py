@@ -58,8 +58,8 @@ def try_generate_chart(
         if detection is None:
             return None
 
-        chart_type, label_col, value_cols = detection
-        fig = _render(results, chart_type, label_col, value_cols, question)
+        chart_type, label_col, value_cols, trimmed_results = detection
+        fig = _render(trimmed_results, chart_type, label_col, value_cols, question)
         if fig is None:
             return None
 
@@ -71,19 +71,55 @@ def try_generate_chart(
         return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Detection
+# ─────────────────────────────────────────────────────────────────────────────# Chart-type intent parser
+# ───────────────────────────────────────────────────────────────────────────────
+
+_CHART_KEYWORDS: Dict[str, List[str]] = {
+    "pie": [
+        "biểu đồ tròn", "hình tròn", "biểu đồ donut", "tỷ lệ phần trăm",
+        "pie chart", "pie graph", "donut chart", "pie",
+    ],
+    "line": [
+        "biểu đồ đường", "xu hướng", "đường kẻ", "theo thời gian", "đồ thị đường",
+        "line chart", "line graph", "trend chart", "time series",
+    ],
+    "horizontal_bar": [
+        "biểu đồ cột ngang", "cột ngang", "thanh ngang",
+        "horizontal bar", "bar horizontal",
+    ],
+    "bar": [
+        "biểu đồ cột", "biểu đồ thanh", "cột dọc", "đồ thị cột",
+        "bar chart", "bar graph", "column chart",
+    ],
+}
+
+_PIE_MAX_SLICES = 8   # max categories for a readable pie chart
+
+
+def _parse_requested_chart_type(question: str) -> Optional[str]:
+    """Return explicit chart type requested by user, or None for auto-detect."""
+    q = question.lower()
+    # Check in priority order: horizontal_bar before bar to avoid false match
+    for chart_type in ("pie", "line", "horizontal_bar", "bar"):
+        if any(kw in q for kw in _CHART_KEYWORDS[chart_type]):
+            return chart_type
+    return None
+
+
+# ───────────────────────────────────────────────────────────────────────────────# Detection
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _detect(
     results: List[Dict],
     question: str,
     sql: str,
-) -> Optional[Tuple[str, Optional[str], List[str]]]:
+) -> Optional[Tuple[str, Optional[str], List[str], List[Dict]]]:
     """
-    Returns (chart_type, label_column, [value_columns]) or None.
+    Returns (chart_type, label_column, [value_columns], trimmed_results) or None.
 
-    Rules (in priority order):
+    Priority:
+    0. If user explicitly requested a chart type, honour it.
+    Auto-detection rules (fallback):
     1. If only 1 row → not chart-worthy (single KPI, not a series).
     2. Classify each column as numeric, date, or categorical.
     3. If date column exists + numeric(s) → line.
@@ -94,6 +130,9 @@ def _detect(
     """
     if len(results) < 2:
         return None
+
+    # ── Step 0: Detect explicit user request ─────────────────────────────
+    requested_type = _parse_requested_chart_type(question)
 
     sample = results[0]
     cols   = list(sample.keys())
@@ -119,10 +158,34 @@ def _detect(
     if not numeric_cols:
         return None
 
+    # ── Step 1: Honour explicit user chart-type request ───────────────────
+    if requested_type and category_cols and numeric_cols:
+        label_col    = category_cols[0]
+        value_col    = numeric_cols[0]
+        trimmed      = results   # default: use all rows
+
+        if requested_type == "pie":
+            # Limit to top-N slices sorted by value descending
+            trimmed = sorted(results, key=lambda r: _to_float(r.get(value_col)), reverse=True)
+            trimmed = trimmed[:_PIE_MAX_SLICES]
+            return ("pie", label_col, [value_col], trimmed)
+
+        if requested_type == "line":
+            label_col = date_cols[0] if date_cols else category_cols[0]
+            return ("line", label_col, numeric_cols[:4], results)
+
+        if requested_type == "horizontal_bar":
+            return ("horizontal_bar", label_col, [value_col], results)
+
+        if requested_type == "bar":
+            return ("bar", label_col, [value_col], results)
+
+    # ── Step 2: Auto-detection fallback ───────────────────────────────
+
     # Prefer date axis → line chart
     if date_cols:
         label_col = date_cols[0]
-        return ("line", label_col, numeric_cols[:4])
+        return ("line", label_col, numeric_cols[:4], results)
 
     # Categorical label + numerics
     if category_cols:
@@ -130,20 +193,20 @@ def _detect(
 
         # Multiple numeric columns → grouped bar
         if len(numeric_cols) >= 2:
-            return ("multi_bar", label_col, numeric_cols[:4])
+            return ("multi_bar", label_col, numeric_cols[:4], results)
 
         # Single numeric
         if n_rows <= 8:
-            return ("pie", label_col, [numeric_cols[0]])
+            return ("pie", label_col, [numeric_cols[0]], results)
 
         if n_rows > 15:
-            return ("horizontal_bar", label_col, [numeric_cols[0]])
+            return ("horizontal_bar", label_col, [numeric_cols[0]], results)
 
-        return ("bar", label_col, [numeric_cols[0]])
+        return ("bar", label_col, [numeric_cols[0]], results)
 
     # All numeric, no labels → line with numeric index
     if len(numeric_cols) >= 2:
-        return ("line", None, numeric_cols[:4])
+        return ("line", None, numeric_cols[:4], results)
 
     return None
 
